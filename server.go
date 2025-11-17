@@ -7,11 +7,10 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-    "strconv"
+	"strconv"
 
 	"github.com/rs/cors"
 )
-
 
 // RenderRequest represents the incoming request payload
 type RenderRequest struct {
@@ -19,6 +18,7 @@ type RenderRequest struct {
 	Data     json.RawMessage `json:"data"`
 }
 
+// RenderResponse represents the outgoing response
 type RenderResponse struct {
 	Output string `json:"output"`
 	Error  string `json:"error,omitempty"`
@@ -45,8 +45,12 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 	// Parse the template string
 	tmpl, err := template.New("template").Parse(req.Template)
 	if err != nil {
+		errMsg := err.Error()
+		line, column := extractLineColumn(errMsg)
 		respondJSON(w, http.StatusBadRequest, RenderResponse{
-			Error: "Template parse error: " + err.Error(),
+			Error:  errMsg,
+			Line:   line,
+			Column: column,
 		})
 		return
 	}
@@ -61,19 +65,17 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute the template
-    	var buf bytes.Buffer
-    	if err := tmpl.Execute(&buf, data); err != nil {
-    		// Try to extract line number from error
-    		errMsg := err.Error()
-    		line, column := extractLineColumn(errMsg)
-
-    		respondJSON(w, http.StatusBadRequest, RenderResponse{
-    			Error:  errMsg,
-    			Line:   line,
-    			Column: column,
-    		})
-    		return
-    	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		errMsg := err.Error()
+		line, column := extractLineColumn(errMsg)
+		respondJSON(w, http.StatusBadRequest, RenderResponse{
+			Error:  errMsg,
+			Line:   line,
+			Column: column,
+		})
+		return
+	}
 
 	// Return the rendered output
 	respondJSON(w, http.StatusOK, RenderResponse{
@@ -82,12 +84,19 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 }
 
 func extractLineColumn(errMsg string) (int, int) {
-	// Matches patterns like "template:1:10:" for line 1, column 10
-	re := regexp.MustCompile(`template:(\d+):(\d+):`)
+	// Handle patterns like:
+	// "template: template:1: unclosed action"
+	// "template:1:10: error"
+
+	re := regexp.MustCompile(`template:(\d+)(?::(\d+))?`)
 	matches := re.FindStringSubmatch(errMsg)
-	if len(matches) > 2 {
+
+	if len(matches) > 1 {
 		line, _ := strconv.Atoi(matches[1])
-		col, _ := strconv.Atoi(matches[2])
+		col := 0
+		if len(matches) > 2 && matches[2] != "" {
+			col, _ = strconv.Atoi(matches[2])
+		}
 		return line, col
 	}
 	return 0, 0
