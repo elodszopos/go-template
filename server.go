@@ -6,9 +6,12 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
+    "strconv"
 
 	"github.com/rs/cors"
 )
+
 
 // RenderRequest represents the incoming request payload
 type RenderRequest struct {
@@ -16,10 +19,11 @@ type RenderRequest struct {
 	Data     json.RawMessage `json:"data"`
 }
 
-// RenderResponse represents the outgoing response
 type RenderResponse struct {
 	Output string `json:"output"`
 	Error  string `json:"error,omitempty"`
+	Line   int    `json:"line,omitempty"`
+	Column int    `json:"column,omitempty"`
 }
 
 // handleRender processes template rendering requests
@@ -57,18 +61,36 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute the template
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		respondJSON(w, http.StatusBadRequest, RenderResponse{
-			Error: "Template execution error: " + err.Error(),
-		})
-		return
-	}
+    	var buf bytes.Buffer
+    	if err := tmpl.Execute(&buf, data); err != nil {
+    		// Try to extract line number from error
+    		errMsg := err.Error()
+    		line, column := extractLineColumn(errMsg)
+
+    		respondJSON(w, http.StatusBadRequest, RenderResponse{
+    			Error:  errMsg,
+    			Line:   line,
+    			Column: column,
+    		})
+    		return
+    	}
 
 	// Return the rendered output
 	respondJSON(w, http.StatusOK, RenderResponse{
 		Output: buf.String(),
 	})
+}
+
+func extractLineColumn(errMsg string) (int, int) {
+	// Matches patterns like "template:1:10:" for line 1, column 10
+	re := regexp.MustCompile(`template:(\d+):(\d+):`)
+	matches := re.FindStringSubmatch(errMsg)
+	if len(matches) > 2 {
+		line, _ := strconv.Atoi(matches[1])
+		col, _ := strconv.Atoi(matches[2])
+		return line, col
+	}
+	return 0, 0
 }
 
 // respondJSON writes a JSON response
